@@ -1,44 +1,46 @@
 package httpNetty;
 
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelProgressiveFuture;
 import io.netty.channel.ChannelProgressiveFutureListener;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
 import io.netty.handler.codec.http.DefaultHttpResponse;
 import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpResponse;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.stream.ChunkedFile;
+import io.netty.util.CharsetUtil;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.RandomAccessFile;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
+import java.util.regex.Pattern;
+
+import javax.activation.MimetypesFileTypeMap;
 
 public class HttpFileServerHandler extends
 		SimpleChannelInboundHandler<FullHttpRequest> {
 
-	private static final String BAD_REQUEST = "400";
 	
 	private static final HttpMethod GET = HttpMethod.GET;
-
-	private static final String METHOD_NOT_ALLOWED = "403";
-
-	private static final String FORBIDDEN = "401";
-
-	private static final String NOT_FOUND = "file not find";
 
 	private static final HttpVersion HTTP_1_1 = HttpVersion.HTTP_1_1;
 	
 
 	private static final HttpResponseStatus OK = HttpResponseStatus.OK;
 
-	private static final String CONNECTION = "connection";
+	
+	 private static final Pattern INSECURE_URI = Pattern.compile(".*[<>&\"].*"); 
 	
 	private String url;
 
@@ -51,29 +53,29 @@ public class HttpFileServerHandler extends
 			throws Exception {
 		System.out.println("channelRead09");
 		if(!request.getDecoderResult().isSuccess()) {
-			sendError(ctx, BAD_REQUEST);
+			sendError(ctx, HttpResponseStatus.BAD_REQUEST);
 			return;
 		}
 		
 		if(request.getMethod() != GET) {
-			sendError(ctx, METHOD_NOT_ALLOWED);
+			sendError(ctx, HttpResponseStatus.METHOD_NOT_ALLOWED);
 			return ;
 		}
 		
 		final String uri = request.getUri();
 		final String path = sanitizeUri(uri);
 		if(path == null) {
-			sendError(ctx, FORBIDDEN);
+			sendError(ctx, HttpResponseStatus.FORBIDDEN);
 			return;
 		}
 		
 		File file = new File(path);
 		if(file.isHidden() || !file.exists()) {
-			sendError(ctx, NOT_FOUND);
+			sendError(ctx, HttpResponseStatus.NOT_FOUND);
 			return;
 		}
 		if(!file.isFile()) {
-			sendError(ctx, FORBIDDEN);
+			sendError(ctx, HttpResponseStatus.FORBIDDEN);
 			return;
 		}
 		
@@ -81,7 +83,7 @@ public class HttpFileServerHandler extends
 		try{
 			randomAccessFile = new RandomAccessFile(file, "r");
 		} catch (FileNotFoundException f) {
-			sendError(ctx, NOT_FOUND);
+			sendError(ctx, HttpResponseStatus.NOT_FOUND);
 			return;
 		}
 		
@@ -89,11 +91,11 @@ public class HttpFileServerHandler extends
 		
 		HttpResponse response = new DefaultHttpResponse(HTTP_1_1, OK);
 		
-		response.headers().set("content-length", fileLength);
+		HttpHeaders.setContentLength(response, fileLength);
 		
-		response.headers().set("content-type", "text/html;charset=UTF-8");
+		setContentTypeHeader(response, file);
 		
-		if(isKeepAlive(request)) {
+		if(HttpHeaders.isKeepAlive(request)) {
 			response.headers().set(CONNECTION, HttpHeaders.Values.KEEP_ALIVE);
 		}
 		
@@ -118,6 +120,29 @@ public class HttpFileServerHandler extends
 				
 			}
 		});
+	}
+
+	
+	/**
+	 * 
+	 * @Title: sendError 
+	 * @Description: 发送error
+	 * @param ctx
+	 * @param status
+	 * @author gww
+	 * 2018年6月14日
+	 */
+	private void sendError(ChannelHandlerContext ctx, HttpResponseStatus status) {
+		FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status);
+		Unpooled.copiedBuffer("Failure : " + status.toString() + "\r\n", CharsetUtil.UTF_8);
+		response.headers().set(HttpHeaders.Names.CONTENT_TYPE, "text/html;charset=utf-8");
+		ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+	}
+
+	private void setContentTypeHeader(HttpResponse response, File file) {
+		MimetypesFileTypeMap mimetypesFileTypeMap = 
+				new MimetypesFileTypeMap();
+		response.headers().set(HttpHeaders.Names.CONTENT_TYPE, mimetypesFileTypeMap.getContentType(file.getPath()));
 	}
 
 
@@ -152,7 +177,23 @@ public class HttpFileServerHandler extends
 				throw new Error();
 			}
 		}
-		return uri;
+		
+		if(!uri.startsWith(url)) {
+			return null;
+		}
+		
+		if(!uri.startsWith("/")) {
+			return null;
+		}
+		 
+		uri = uri.replace("/", File.separator);
+		if(uri.contains(File.separator + ".") || uri.contains("." + File.separator)
+				|| uri.startsWith(".") || uri.endsWith(".") || INSECURE_URI.matcher(uri).matches()) {
+			return null;
+		}
+		
+		
+		return System.getProperty("user.dir") + File.separator + uri;
 	}
 	
 
