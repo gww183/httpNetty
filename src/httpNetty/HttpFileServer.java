@@ -16,8 +16,13 @@ import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.stream.ChunkedWriteHandler;
 
 public class HttpFileServer {
-
-	public void bind(int port, String url) {
+	
+	public static void main(String[] arg) {
+		int port = 8080;
+		new HttpFileServer().bind(port);
+	}
+		
+	public void bind(int port) {
 		// 定义接受连接group
 		EventLoopGroup bossGroup = new NioEventLoopGroup();
 		// 定义处理连接的group
@@ -47,7 +52,7 @@ public class HttpFileServer {
 					socketChannel.pipeline().addLast("http-encoder", new HttpResponseEncoder());
 					socketChannel.pipeline().addLast("http-chunked", new ChunkedWriteHandler());
 					// 设置文件服务处理类
-					socketChannel.pipeline().addLast("fileServerHandler", new HttpFileServerHandler(url));
+					socketChannel.pipeline().addLast("fileServerHandler", new HttpFileServerHandler());
 				}
 			});
 			ChannelFuture future = bootStrap.bind(port).sync();
